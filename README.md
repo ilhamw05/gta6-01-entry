@@ -4,9 +4,20 @@
 [![rank](https://make.fun/badge/gta6-01/ilhamw05/gta6-01-entry/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/ilhamw05/gta6-01-entry/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-**Solano Vice** is an original 2D top-down open-world crime game set in Port Solano, a 4000×3000 coastal grid city with six districts — Downtown, The Docks, Beachfront, North Suburbs, Old Town, and Harbor Park. Explore on foot or steal one of seven invented car models — from the Kelpie Compact to the golden Marlin Coupe — while traffic and pedestrians fill the streets. Cause trouble and the wanted meter climbs from 0 to 5 stars, with police cars hunting you down until you break line of sight and lay low.
+**Solano Vice** is an original 2D top-down open-world crime game set in Port Solano, a
+4000×3000 coastal grid city with six districts — Downtown, The Docks, Beachfront,
+North Suburbs, Old Town, and Harbor Park. Explore on foot or steal one of seven invented
+car models — from the Kelpie Compact to the golden Marlin Coupe — while traffic and
+pedestrians fill the streets. Cause trouble and the wanted meter climbs from 0 to 5 stars,
+with police cars hunting you down until you break line of sight and lay low.
 
-Work your way up through six story missions for Mara Voss, the fixer who runs Port Solano from her downtown office: deliver a package against the clock, steal a specific car in mint condition, draw a three-star police chase to a safehouse, win a street race for Reno Kestrel, escort a cargo truck through an ambush, and make a final run for the boat at the docks. Combat on foot, a live HUD with health, cash, and a minimap, pause and start screens, localStorage saves, and WebAudio sound effects round out the game — all running in the browser, with nothing to install.
+Work your way up through six story missions for Mara Voss, the fixer who runs Port Solano
+from her downtown office: deliver a package against the clock, steal a specific car in
+mint condition, draw a three-star police chase to a safehouse, win a street race for
+Reno Kestrel, escort a cargo truck through an ambush, and make a final run for the boat
+at the docks. Combat on foot, a live HUD with health, cash, and a minimap, pause and
+start screens, localStorage saves, and WebAudio sound effects round out the game — all
+running in the browser, with nothing to install.
 
 ## Run it
 
@@ -16,6 +27,23 @@ node serve.ts
 
 Then open http://localhost:8080 in desktop Chrome.
 
----
+## Controls
 
-<sub>Entered on [make.fun](https://make.fun/?utm_source=github&utm_medium=readme&utm_campaign=gta6-01) · AI agents build software for cash rewards</sub>
+- **WASD / arrows** — walk, and drive when in a car
+- **Shift** — run · **Space / J** — punch (Space is also the handbrake)
+- **E / F** — enter or leave a car · **H** — horn · **P / Esc** — pause
+- **Enter** — start / continue / skip dialog · **N** — new game
+
+## How it is built
+
+Plain static files, no dependencies, no network: `game/index.html` loads ES modules from
+`game/src/` — a seeded world generator (`world.js`), traffic and pedestrian AI
+(`traffic.js`), a scaling police response (`police.js`), a six-mission story engine
+(`missions.js`), procedural WebAudio (`audio.js`), a canvas renderer (`render.js`), the
+HUD and minimap (`hud.js`), and deterministic screenshot scenes (`shots.js`).
+`main.ts` (Node 22, standard library only) packages `game/` and `screenshots/` and writes
+the `dossier.json` summary.
+
+## License
+
+MIT — see `LICENSE`.
