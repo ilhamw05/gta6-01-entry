@@ -184,7 +184,6 @@ export function createMissions(world, police, random) {
 
   function stepRace(active, dt) {
     const p = state.player;
-    const step = active.def.steps[0];
     const cp = RACE_POINTS[active.raceIdx];
     if (!cp) { completeMission(); return; }
     if (dist(p.x, p.y, cp.x, cp.y) < 110) {
@@ -215,7 +214,6 @@ export function createMissions(world, police, random) {
         }
       }
     }
-    void step;
   }
 
   function stepEscort(active, dt) {

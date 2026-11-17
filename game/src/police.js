@@ -190,7 +190,7 @@ export function createPolice(world, random) {
     if (seen) state.lastSeenTimer = 0;
     else state.lastSeenTimer += dt;
     if (state.wantedHeat > 0 && state.lastSeenTimer > WANTED.decayDelay) {
-      state.wantedHeat = Math.max(0, state.wantedHeat - dt / (WANTED.decayStep / 1));
+      state.wantedHeat = Math.max(0, state.wantedHeat - dt / WANTED.decayStep);
       if (state.lastSeenTimer > WANTED.decayDelay + WANTED.decayStep) state.lastSeenTimer = WANTED.decayDelay;
     }
     if (state.wantedHeat > 0) maintain();

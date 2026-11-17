@@ -411,11 +411,11 @@ export function createWorld(random) {
     p.inCar = best;
     best.parked = false;
     best.traffic = false;
+    // Taking a car that still has its driver counts as a theft and raises the heat.
     if (best.driver) {
       best.driver = false;
       state.stats.carsStolen += 1;
       state.wantedHeat = Math.min(WANTED.max, state.wantedHeat + 1);
-      return best;
     }
     return best;
   }

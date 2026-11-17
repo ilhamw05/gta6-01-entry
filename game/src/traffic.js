@@ -5,6 +5,8 @@
 import { CAR, LANE, PED, ROADS_H, ROADS_V, ROAD_WIDTH, WORLD } from './config.js';
 import { clamp, dist } from './world.js';
 
+export const EVENT_RUNOVER = 64;
+
 const TWO_PI = Math.PI * 2;
 
 function angleDiff(a, b) {
@@ -208,11 +210,9 @@ export function stepCollisions(world, events) {
         state.stats.pedsHit += 1;
         state.wantedHeat = Math.min(5, state.wantedHeat + 1);
         world.addParticles(ped.x, ped.y, '#ff5a4a', 12, 220);
-        events |= 64; // EVENT_RUNOVER, handled by the caller as a crime.
+        events |= EVENT_RUNOVER; // Handled by the caller as a crime.
       }
     }
   }
   return events;
 }
-
-export const EVENT_RUNOVER = 64;

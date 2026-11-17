@@ -1,7 +1,7 @@
 // The HUD and the minimap for Solano Vice: health, cash, wanted stars, the car you are in,
 // the current objective, the clock, and a live minimap of Port Solano. Everything here
 // draws in screen space (1280x720); the renderer switches to this space before calling it.
-import { FONT, PALETTE, WORLD } from './config.js';
+import { FONT, PALETTE, ROADS_H, ROADS_V, WORLD } from './config.js';
 import { dist } from './world.js';
 
 const MM = { x: 1040, y: 16, w: 224, h: 168 };
@@ -115,12 +115,12 @@ function drawMinimap(ctx, world, missions, police) {
   ctx.fillRect(MM.x, MM.y + (2900 * MM_SY), MM.w, MM.h - 2900 * MM_SY);
   ctx.fillStyle = PALETTE.sand;
   ctx.fillRect(MM.x, MM.y + (2820 * MM_SY), MM.w, 80 * MM_SY);
-  // Roads.
+  // Roads, drawn from the same centre lines the world is built on.
   ctx.fillStyle = '#3a3f47';
-  for (const x of [400, 1000, 1600, 2200, 2800, 3400]) {
+  for (const x of ROADS_V) {
     ctx.fillRect(MM.x + x * MM_SX - 3, MM.y, 6, MM.h);
   }
-  for (const y of [350, 950, 1550, 2150, 2650]) {
+  for (const y of ROADS_H) {
     ctx.fillRect(MM.x, MM.y + y * MM_SY - 3, MM.w, 6);
   }
   // The park.
