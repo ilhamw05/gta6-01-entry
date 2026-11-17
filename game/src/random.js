@@ -1,11 +1,11 @@
-// A small seeded random number generator (mulberry32). The same seed always gives the same
-// sequence, which is what makes the city, the traffic and the screenshot scenes repeatable.
-// Every random choice in the game goes through a generator built by createRandom — never
-// through Math.random — so a staged scene renders the same frame every time.
+// A small seeded random generator (mulberry32) plus the handful of helpers the city builder
+// and the AI drivers reach for. Nothing in the game uses Math.random: a seed fully decides a
+// world, which is what makes the screenshot scenes repeatable frame for frame.
 
+/** Create a generator from a 32-bit seed. Returns a function giving floats in [0, 1). */
 export function createRandom(seed) {
-  let a = seed | 0;
-  return function random() {
+  let a = seed >>> 0;
+  return function next() {
     a = (a + 0x6d2b79f5) | 0;
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
@@ -13,17 +13,22 @@ export function createRandom(seed) {
   };
 }
 
-/** Pick one entry from a list with the seeded generator. */
-export function pick(random, list) {
-  return list[Math.floor(random() * list.length)];
+/** Float in [min, max). */
+export function range(rng, min, max) {
+  return min + rng() * (max - min);
 }
 
-/** A value in [min, max) from the seeded generator. */
-export function range(random, min, max) {
-  return min + random() * (max - min);
+/** Integer in [min, max], both ends included. */
+export function int(rng, min, max) {
+  return min + Math.floor(rng() * (max - min + 1));
 }
 
-/** An integer in [min, max] from the seeded generator. */
-export function intRange(random, min, max) {
-  return min + Math.floor(random() * (max - min + 1));
+/** True with probability p. */
+export function chance(rng, p) {
+  return rng() < p;
+}
+
+/** One element of a non-empty array. */
+export function pick(rng, items) {
+  return items[Math.floor(rng() * items.length)];
 }

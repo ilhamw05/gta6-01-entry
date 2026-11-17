@@ -1,373 +1,355 @@
-// The story: six jobs for Mara Voss, the fixer who runs Port Solano from a downtown
-// office above the old ferry terminal. Every mission is an original story written for this
-// game. The controller is a small state machine: each mission is a list of steps (go to a
-// place, pick something up, steal a car, outrun the police, race, escort, reach the boat),
-// and the HUD reads the current step for its objective text and its minimap marker.
-import { MISSION_REWARDS } from './config.js';
-import { clamp, dist } from './world.js';
+// The story of Solano Vice: six jobs for Mara Voss, the fixer who runs Port Solano from a
+// downtown office. This module is the mission engine (markers, dialogs, objectives, rewards)
+// and the six mission scripts themselves. Missions run one at a time, in order; between them
+// the player free-roams to Mara's door for the next job.
+import { CAR_MODELS, HEAT, PLACES } from './config.js';
+import { carById, commitCrime, makeCar, wantedStars } from './world.js';
+import { driveToward } from './traffic.js';
+import { moveCar } from './world.js';
 
-export const MISSIONS = [
-  {
-    id: 1, title: 'Paket Kilat', giver: 'Mara Voss', reward: MISSION_REWARDS[0],
-    brief: [
-      'Mara Voss: "Selamat datang di Port Solano, kurir. Ada paket di gudang dermaga."',
-      'Mara Voss: "Antar ke kafe sudut Downtown sebelum 90 detik. Jangan sampai telat."',
-    ],
-    steps: [
-      { kind: 'goto', label: 'Ambil paket di gudang dermaga', x: 3150, y: 2400, r: 90 },
-      { kind: 'deliver', label: 'Antar paket ke kafe Downtown (90 dtk)', x: 1850, y: 700, r: 90, time: 90 },
-    ],
-  },
-  {
-    id: 2, title: 'Pesanan Khusus', giver: 'Mara Voss', reward: MISSION_REWARDS[1],
-    brief: [
-      'Mara Voss: "Pembeli di dermaga mau satu Marlin Coupe emas. Persis yang itu."',
-      'Mara Voss: "Bawa ke dermaga. Kalau penyok parah, harganya jatuh. Hati-hati."',
-    ],
-    steps: [
-      { kind: 'steal', label: 'Curi Marlin Coupe emas di Beachfront', x: 1250, y: 2700, r: 80 },
-      { kind: 'deliverCar', label: 'Antar coupe emas ke dermaga', x: 3300, y: 2500, r: 110, maxDamage: 85 },
-    ],
-  },
-  {
-    id: 3, title: 'Lari dari Kejaran', giver: 'Mara Voss', reward: MISSION_REWARDS[2],
-    brief: [
-      'Mara Voss: "Polisi mengendus gudang kita. Kau harus mengalihkan mereka."',
-      'Mara Voss: "Bikin keributan sampai bintang tiga, lalu kabur ke rumah aman di Suburbs."',
-    ],
-    steps: [
-      { kind: 'escape', label: 'Kabur ke rumah aman dengan bintang 3', x: 700, y: 2400, r: 110 },
-    ],
-  },
-  {
-    id: 4, title: 'Balapan Jalanan', giver: 'Reno Kestrel', reward: MISSION_REWARDS[3],
-    brief: [
-      'Reno Kestrel: "Balapan tengah malam. Dua pembalap, empat pos, satu pemenang."',
-      'Reno Kestrel: "Lewati semua pos sebelum mereka. Taruhannya? Gengsi dan uang."',
-    ],
-    steps: [
-      { kind: 'race', label: 'Balapan: lewati 4 pos sebelum rival', x: 0, y: 0, r: 0 },
-    ],
-  },
-  {
-    id: 5, title: 'Kawal Kargo', giver: 'Mara Voss', reward: MISSION_REWARDS[4],
-    brief: [
-      'Mara Voss: "Truk kargo harus sampai ke gudang utara. Ada yang mau merampoknya."',
-      'Mara Voss: "Kawal truknya. Kalau truk itu hancur, kita semua rugi."',
-    ],
-    steps: [
-      { kind: 'escort', label: 'Kawal truk kargo ke gudang utara', x: 700, y: 600, r: 120 },
-    ],
-  },
-  {
-    id: 6, title: 'Pelarian Terakhir', giver: 'Mara Voss', reward: MISSION_REWARDS[5],
-    brief: [
-      'Mara Voss: "Ini dia. Seluruh kepolisian kota mengejarmu malam ini."',
-      'Mara Voss: "Capai kapal di dermaga. Kalau kau sampai, kita bebas. Selamanya."',
-    ],
-    steps: [
-      { kind: 'finale', label: 'Capai kapal di dermaga — bintang 5!', x: 3620, y: 2845, r: 120 },
-    ],
-  },
-];
+export const MISSION_REWARDS = [300, 450, 600, 800, 1000, 1500];
 
-const RACE_POINTS = [
-  { x: 1000, y: 350 }, { x: 3400, y: 950 }, { x: 3400, y: 2150 }, { x: 1000, y: 2650 },
-];
-const ESCORT_PATH = [
-  { x: 3400, y: 2150 }, { x: 3400, y: 950 }, { x: 2200, y: 950 }, { x: 1000, y: 950 }, { x: 700, y: 600 },
-];
-
-export function createMissions(world, police, random) {
-  const { state } = world;
-  const ctrl = {
-    index: 0,
-    active: null,
-    completed: [],
-    failed: false,
-    banner: '',
-    bannerTimer: 0,
-    dialogue: [],
-    dialogueTimer: 0,
-    prompt: '',
-  };
-
-  function say(lines) {
-    ctrl.dialogue = [...lines];
-    ctrl.dialogueTimer = 5.5;
-  }
-
-  function showBanner(text, seconds) {
-    ctrl.banner = text;
-    ctrl.bannerTimer = seconds;
-  }
-
-  function officePoint() {
-    const o = state.city.maraOffice;
-    return { x: o.x + o.w / 2, y: o.y + o.h + 60 };
-  }
-
-  function spawnCarAt(x, y, modelName, color, extra) {
-    const car = {
-      id: 5000 + Math.floor(random() * 9000), x, y, angle: random() * Math.PI * 2,
-      speed: 0, model: { name: modelName, color, top: 560 }, color, top: 560,
-      parked: true, traffic: false, police: false, racer: false, escort: false, attacker: false,
-      gold: false, damage: 0, smoke: 0, hp: 100, driver: false,
-      roadAxis: 'v', road: 2200, dir: 1, targetAngle: 0, cruise: 300, stopTimer: 0,
-      ...extra,
-    };
-    state.cars.push(car);
-    return car;
-  }
-
-  function startMission(i) {
-    const def = MISSIONS[i];
-    const active = {
-      def, stepIdx: 0, timer: 0, goldCar: null, truck: null, racers: [],
-      raceIdx: 0, racerIdx: [0, 0], escortIdx: 0, attackers: [], finished: false,
-    };
-    ctrl.active = active;
-    ctrl.failed = false;
-    say(def.brief);
-    showBanner(`MISI ${def.id}: ${def.title}`, 3.5);
-    const step = def.steps[0];
-    if (step.kind === 'escape') police.addHeat(3);
-    if (step.kind === 'finale') police.addHeat(5);
-    if (step.kind === 'steal') {
-      active.goldCar = spawnCarAt(step.x, step.y, 'Marlin Coupe', '#e8c93c', { gold: true, parked: true });
-    }
-    if (step.kind === 'race') {
-      active.racers = [
-        spawnCarAt(950, 350, 'Kelpie Compact', '#c94f4f', { racer: true, parked: false, driver: true }),
-        spawnCarAt(1050, 350, 'Dune Runner', '#4f7ac9', { racer: true, parked: false, driver: true }),
-      ];
-      active.racers[0].raceTarget = 0;
-      active.racers[1].raceTarget = 0;
-    }
-    if (step.kind === 'escort') {
-      active.truck = spawnCarAt(3400, 2150, 'Tide Van', '#e8e8e8', { escort: true, parked: false, driver: true, hp: 100 });
-      active.truck.escortTarget = 0;
-      active.attackers = [
-        spawnCarAt(3000, 2150, 'Cinder Pickup', '#3f9a4a', { attacker: true, parked: false, driver: true }),
-        spawnCarAt(3400, 1800, 'Vesper Sedan', '#8a8f96', { attacker: true, parked: false, driver: true }),
-      ];
-    }
-    return active;
-  }
-
-  function failMission(reason) {
-    ctrl.active = null;
-    ctrl.failed = true;
-    showBanner(`MISI GAGAL — ${reason}`, 4);
-    say(['Mara Voss: "Gagal. Tenang, kita coba lagi. Kembali ke kantorku kalau sudah siap."']);
-    police.clearWanted();
-  }
-
-  function completeMission() {
-    const active = ctrl.active;
-    const def = active.def;
-    state.player.cash += def.reward;
-    state.stats.cashEarned += def.reward;
-    state.stats.missionsDone += 1;
-    ctrl.completed.push(def.id);
-    ctrl.index = Math.min(MISSIONS.length, ctrl.index + 1);
-    ctrl.active = null;
-    showBanner(`MISI SELESAI! +$${def.reward}`, 4);
-    say([`Mara Voss: "Bagus. $${def.reward} sudah masuk. Istirahat dulu, kurir."`]);
-    police.clearWanted();
-    if (ctrl.index >= MISSIONS.length) {
-      state.flags.storyComplete = true;
-      showBanner('CERITA SELESAI — Port Solano milikmu!', 6);
-      say(['Mara Voss: "Kau bebas, kurir. Kota ini sekarang mengenal namamu."']);
-    }
-  }
-
-  function stepRace(active, dt) {
-    const p = state.player;
-    const cp = RACE_POINTS[active.raceIdx];
-    if (!cp) { completeMission(); return; }
-    if (dist(p.x, p.y, cp.x, cp.y) < 110) {
-      active.raceIdx += 1;
-      world.addParticles(cp.x, cp.y, '#58d68a', 16, 220);
-      if (active.raceIdx >= RACE_POINTS.length) { completeMission(); return; }
-    }
-    // Rival racers drive the same checkpoints.
-    for (let i = 0; i < active.racers.length; i += 1) {
-      const racer = active.racers[i];
-      if (racer.hp <= 0) continue;
-      const target = RACE_POINTS[active.racerIdx[i]];
-      if (!target) continue;
-      const want = Math.atan2(target.y - racer.y, target.x - racer.x);
-      let diff = want - racer.angle;
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      racer.angle += clamp(diff, -2.4 * dt, 2.4 * dt);
-      racer.speed += (430 - racer.speed) * Math.min(1, dt);
-      racer.x += Math.cos(racer.angle) * racer.speed * dt;
-      racer.y += Math.sin(racer.angle) * racer.speed * dt;
-      world.resolveCircle(racer, 24);
-      if (dist(racer.x, racer.y, target.x, target.y) < 110) {
-        active.racerIdx[i] += 1;
-        if (active.racerIdx[i] >= RACE_POINTS.length) {
-          failMission('Rival sampai duluan di garis akhir');
-          return;
-        }
-      }
-    }
-  }
-
-  function stepEscort(active, dt) {
-    const truck = active.truck;
-    if (!truck || truck.hp <= 0) {
-      failMission('Truk kargo hancur');
-      return;
-    }
-    const target = ESCORT_PATH[active.escortIdx];
-    if (!target) { completeMission(); return; }
-    const want = Math.atan2(target.y - truck.y, target.x - truck.x);
-    let diff = want - truck.angle;
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    truck.angle += clamp(diff, -1.8 * dt, 1.8 * dt);
-    truck.speed += (200 - truck.speed) * Math.min(1, dt);
-    truck.x += Math.cos(truck.angle) * truck.speed * dt;
-    truck.y += Math.sin(truck.angle) * truck.speed * dt;
-    world.resolveCircle(truck, 24);
-    if (dist(truck.x, truck.y, target.x, target.y) < 110) {
-      active.escortIdx += 1;
-      if (active.escortIdx >= ESCORT_PATH.length) { completeMission(); return; }
-    }
-    // Attackers ram the truck.
-    for (const atk of active.attackers) {
-      if (atk.hp <= 0) continue;
-      const a = Math.atan2(truck.y - atk.y, truck.x - atk.x);
-      let d2 = a - atk.angle;
-      while (d2 > Math.PI) d2 -= Math.PI * 2;
-      while (d2 < -Math.PI) d2 += Math.PI * 2;
-      atk.angle += clamp(d2, -2.6 * dt, 2.6 * dt);
-      atk.speed += (380 - atk.speed) * Math.min(1, dt);
-      atk.x += Math.cos(atk.angle) * atk.speed * dt;
-      atk.y += Math.sin(atk.angle) * atk.speed * dt;
-      world.resolveCircle(atk, 24);
-      if (dist(atk.x, atk.y, truck.x, truck.y) < 62) {
-        truck.hp -= 14 * dt * 4;
-        truck.damage += 4 * dt * 4;
-        atk.speed *= 0.5;
-        world.addParticles(truck.x, truck.y, '#ff5a4a', 4, 160);
-      }
-    }
-  }
-
-  function update(dt) {
-    if (ctrl.bannerTimer > 0) ctrl.bannerTimer -= dt;
-    if (ctrl.dialogueTimer > 0) ctrl.dialogueTimer -= dt;
-    const active = ctrl.active;
-    if (!active) {
-      // Idle: show the prompt when the player stands by Mara's office.
-      const office = officePoint();
-      const p = state.player;
-      ctrl.prompt = ctrl.index < MISSIONS.length && dist(p.x, p.y, office.x, office.y) < 110
-        ? `Tekan E untuk memulai Misi ${ctrl.index + 1}: ${MISSIONS[ctrl.index].title}`
-        : '';
-      return;
-    }
-    ctrl.prompt = '';
-    const step = active.def.steps[active.stepIdx];
-    const p = state.player;
-    if (step.time) {
-      active.timer += dt;
-      if (active.timer > step.time) {
-        failMission('Waktu habis');
-        return;
-      }
-    }
-    if (step.kind === 'goto' || step.kind === 'deliver') {
-      if (dist(p.x, p.y, step.x, step.y) < step.r) {
-        if (step.kind === 'goto' && active.stepIdx === 0) {
-          world.addParticles(p.x, p.y, '#58d68a', 14, 200);
-          say(['Paket didapat. Sekarang antar ke tujuan sebelum waktu habis!']);
-        }
-        active.stepIdx += 1;
-        active.timer = 0;
-        if (active.stepIdx >= active.def.steps.length) completeMission();
-      }
-    } else if (step.kind === 'steal') {
-      if (p.inCar === active.goldCar) {
-        active.stepIdx += 1;
-        say(['Mara Voss: "Itu dia. Sekarang bawa ke dermaga, jangan sampai penyok."']);
-      } else if (active.goldCar && active.goldCar.hp <= 0) {
-        failMission('Mobil target hancur');
-      }
-    } else if (step.kind === 'deliverCar') {
-      if (p.inCar !== active.goldCar) {
-        // Player left the gold car: point them back to it.
-      } else if (dist(p.x, p.y, step.x, step.y) < step.r) {
-        if (active.goldCar.damage > step.maxDamage) failMission('Mobil terlalu penyok');
-        else completeMission();
-      }
-    } else if (step.kind === 'escape') {
-      if (state.wantedHeat < 2) police.addHeat(2.2 - state.wantedHeat);
-      if (dist(p.x, p.y, step.x, step.y) < step.r) completeMission();
-    } else if (step.kind === 'race') {
-      stepRace(active, dt);
-    } else if (step.kind === 'escort') {
-      stepEscort(active, dt);
-    } else if (step.kind === 'finale') {
-      if (state.wantedHeat < 4.5) police.addHeat(5 - state.wantedHeat);
-      if (dist(p.x, p.y, step.x, step.y) < step.r) completeMission();
-    }
-  }
-
-  /** The current objective for the HUD and the minimap marker. */
-  function objective() {
-    if (ctrl.active) {
-      const active = ctrl.active;
-      const step = active.def.steps[Math.min(active.stepIdx, active.def.steps.length - 1)];
-      if (step.kind === 'race') {
-        const cp = RACE_POINTS[Math.min(active.raceIdx, RACE_POINTS.length - 1)];
-        return { label: `${step.label} — pos ${Math.min(active.raceIdx + 1, 4)}/4`, x: cp.x, y: cp.y, timeLeft: 0 };
-      }
-      if (step.kind === 'escort') {
-        const t = active.truck;
-        return { label: `${step.label} — truk ${Math.max(0, Math.round(t ? t.hp : 0))}%`, x: t ? t.x : step.x, y: t ? t.y : step.y, timeLeft: 0 };
-      }
-      if (step.kind === 'steal' && active.goldCar) {
-        return { label: step.label, x: active.goldCar.x, y: active.goldCar.y, timeLeft: 0 };
-      }
-      const timeLeft = step.time ? Math.max(0, step.time - active.timer) : 0;
-      return { label: step.label, x: step.x, y: step.y, timeLeft };
-    }
-    if (ctrl.index < MISSIONS.length) {
-      const office = officePoint();
-      return { label: `Misi ${ctrl.index + 1}: ${MISSIONS[ctrl.index].title} — ke kantor Mara`, x: office.x, y: office.y, timeLeft: 0 };
-    }
-    return { label: 'Bebas berkeliaran di Port Solano', x: 0, y: 0, timeLeft: 0 };
-  }
-
-  function marker() {
-    const obj = objective();
-    return obj.x === 0 && obj.y === 0 ? null : { x: obj.x, y: obj.y };
-  }
-
-  function tryStart() {
-    if (ctrl.active || ctrl.index >= MISSIONS.length) return false;
-    const office = officePoint();
-    const p = state.player;
-    if (dist(p.x, p.y, office.x, office.y) < 110) {
-      startMission(ctrl.index);
-      return true;
-    }
-    return false;
-  }
-
-  function retry() {
-    if (!ctrl.failed) return;
-    ctrl.failed = false;
-    startMission(ctrl.index);
-  }
-
-  return {
-    ctrl, MISSIONS, update, objective, marker, tryStart, retry, startMission,
-    officePoint, RACE_POINTS, ESCORT_PATH, showBanner, say,
-  };
+function dist(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
 }
+
+/** Say lines: a queue of [speaker, text] shown in the dialog box, one at a time. */
+function say(state, lines) {
+  state.mission.dialog = { lines, i: 0, t: 0 };
+}
+
+function banner(state, text, good = true) {
+  state.mission.banner = { text, good, t: 0 };
+}
+
+function finish(state, runtime) {
+  const reward = MISSION_REWARDS[runtime.def];
+  state.player.cash += reward;
+  state.fx.push('missiondone');
+  banner(state, `Job done — $${reward}`);
+  state.mission.next = runtime.def + 1;
+  state.mission.active = null;
+  if (runtime.def === 5) {
+    state.storyDone = true;
+    banner(state, `Story complete — $${reward}. Port Solano is yours.`);
+  }
+}
+
+function fail(state, reason) {
+  state.fx.push('missionfail');
+  banner(state, `Job failed — ${reason}`, false);
+  state.mission.active = null;
+}
+
+/** Called by main when the player is arrested or wrecked mid-mission. */
+export function failActiveMission(state, why) {
+  if (state.mission?.active) fail(state, why);
+}
+
+const MISSIONS = [
+  {
+    title: 'First Errand',
+    intro: [
+      ['Mara Voss', 'New face, old city. I move packages, not questions.'],
+      ['Mara Voss', 'A parcel waits in Old Town. Bring it to Rosa\'s café, downtown. The clock is not your friend.'],
+    ],
+    setup(state) {
+      return { phase: 'pickup', target: { ...PLACES.packageSpot }, timer: null };
+    },
+    update(state, rt, dt) {
+      if (rt.phase === 'pickup') {
+        if (dist(state.player, rt.target) < 46) {
+          rt.phase = 'deliver';
+          rt.target = { ...PLACES.truckDest };
+          rt.timer = 120;
+          state.fx.push('pickup');
+          say(state, [['Mara Voss', 'Got it? Good. Rosa is waiting — two minutes, no sightseeing.']]);
+        }
+        return null;
+      }
+      rt.timer -= dt;
+      if (rt.timer <= 0) return 'the café went cold';
+      if (dist(state.player, rt.target) < 52) return 'done';
+      return null;
+    },
+    objective(rt) {
+      return rt.phase === 'pickup' ? 'Pick up the package in Old Town' : `Deliver the package to Rosa's café — ${Math.max(0, Math.ceil(rt.timer))}s`;
+    },
+  },
+  {
+    title: 'Mint Condition',
+    intro: [
+      ['Mara Voss', 'A golden Marlin Coupe sleeps in the North Suburbs. Its owner owes me.'],
+      ['Mara Voss', 'Steal it, and bring it to my docks garage without a scratch worth naming.'],
+    ],
+    setup(state) {
+      const coupe = state.cars.find((c) => c.tag === 'coupe');
+      return { phase: 'steal', coupeId: coupe?.id, target: null };
+    },
+    update(state, rt) {
+      const coupe = carById(state, rt.coupeId);
+      if (!coupe || coupe.dead) return 'the coupe is wrecked';
+      rt.target = { x: coupe.x, y: coupe.y };
+      if (rt.phase === 'steal') {
+        if (state.player.carId === coupe.id) rt.phase = 'deliver';
+        return null;
+      }
+      if (state.player.carId === coupe.id) {
+        rt.target = { ...PLACES.docksGarage };
+        if (dist(state.player, rt.target) < 64) {
+          if (coupe.hp < coupe.maxHp * 0.5) return 'the coupe arrived half-dead';
+          return 'done';
+        }
+      }
+      return null;
+    },
+    objective(rt) {
+      return rt.phase === 'steal' ? 'Steal the golden Marlin Coupe' : 'Deliver the coupe to the docks garage, gently';
+    },
+  },
+  {
+    title: 'Heat Run',
+    intro: [
+      ['Mara Voss', 'Tonight you are bait. Draw every badge in Port Solano after you.'],
+      ['Mara Voss', 'Three stars on your head — then lose yourself at the Harbor Park safehouse.'],
+    ],
+    setup(state) {
+      state.heat = Math.max(state.heat, HEAT.missionCrime + 220); // three stars, on the house
+      return { phase: 'run', target: { ...PLACES.safehouse } };
+    },
+    update(state, rt) {
+      if (dist(state.player, rt.target) < 56) return 'done';
+      return null;
+    },
+    objective() {
+      return 'Reach the Harbor Park safehouse with the heat on';
+    },
+  },
+  {
+    title: 'Harbor Sprint',
+    intro: [
+      ['Reno Kestrel', 'Six lights around the bay, sweetheart. My crew runs them in four minutes.'],
+      ['Mara Voss', 'Beat Reno\'s two drivers through every checkpoint. Pride pays cash here.'],
+    ],
+    setup(state) {
+      const cps = [
+        { x: 3300, y: 420 }, { x: 2220, y: 420 }, { x: 2220, y: 1740 },
+        { x: 3300, y: 1740 }, { x: 3300, y: 2400 }, { x: 3300, y: 1080 },
+      ];
+      const rivals = [];
+      const spots = [
+        { x: 3264, y: 1330 }, { x: 3336, y: 1330 },
+      ];
+      for (let i = 0; i < 2; i += 1) {
+        const car = makeCar(state, i === 0 ? 4 : 5, spots[i].x, spots[i].y, Math.PI, i === 0 ? '#a31f34' : '#2a9d8f');
+        car.driver = 'mission';
+        car.tag = 'rival';
+        car.cp = 0;
+        state.cars.push(car);
+        rivals.push(car.id);
+      }
+      return { phase: 'count', t: 3, cps, playerCp: 0, rivals, target: { ...PLACES.raceStart } };
+    },
+    update(state, rt, dt) {
+      if (rt.phase === 'count') {
+        rt.t -= dt;
+        if (rt.t <= 0) { rt.phase = 'race'; state.fx.push('go'); }
+        return null;
+      }
+      // Rivals chase their next light.
+      for (const id of rt.rivals) {
+        const car = carById(state, id);
+        if (!car || car.dead) continue;
+        if (car.cp >= rt.cps.length) continue;
+        const cp = rt.cps[car.cp];
+        if (Math.hypot(car.x - cp.x, car.y - cp.y) < 95) { car.cp += 1; continue; }
+        const { steer, throttle } = driveToward(state, car, cp.x, cp.y, dt, 0.92);
+        moveCar(state, car, throttle, steer, dt);
+      }
+      const anyRivalDone = rt.rivals.some((id) => (carById(state, id)?.cp ?? 0) >= rt.cps.length);
+      if (anyRivalDone && rt.playerCp < rt.cps.length) return 'Reno\'s crew took the lights';
+      if (state.player.carId === null) { rt.target = { ...PLACES.raceStart }; return null; }
+      const cp = rt.cps[rt.playerCp];
+      if (!cp) return 'done';
+      rt.target = { x: cp.x, y: cp.y };
+      if (dist(state.player, cp) < 95) {
+        rt.playerCp += 1;
+        state.fx.push('checkpoint');
+        if (rt.playerCp >= rt.cps.length) return 'done';
+      }
+      return null;
+    },
+    objective(rt) {
+      if (rt.phase === 'count') return `Get ready… ${Math.ceil(rt.t)}`;
+      return `Harbor Sprint — checkpoint ${Math.min(rt.playerCp + 1, rt.cps.length)} of ${rt.cps.length}`;
+    },
+    cleanup(state, rt) {
+      for (const id of rt.rivals) {
+        const car = carById(state, id);
+        if (car && car.driver === 'mission') car.driver = 'parked';
+      }
+    },
+  },
+  {
+    title: 'Convoy Guard',
+    intro: [
+      ['Captain Ilya Brandt', 'My Hauler carries the harbour payroll. Every rat in the docks knows.'],
+      ['Mara Voss', 'Ride shotgun. Keep Ilya\'s truck rolling to the downtown depot — and keep it whole.'],
+    ],
+    setup(state) {
+      const truck = makeCar(state, 6, PLACES.truckStart.x, PLACES.truckStart.y, -Math.PI / 2, '#7a4a21');
+      truck.driver = 'mission';
+      truck.tag = 'truck';
+      state.cars.push(truck);
+      return {
+        phase: 'escort', truckId: truck.id, target: { ...PLACES.truckDest },
+        route: [
+          { x: 2280, y: 2460 }, { x: 2220, y: 1740 }, { x: 2220, y: 1140 },
+          { x: 2040, y: 1080 }, { ...PLACES.truckDest },
+        ],
+        wp: 0, awayT: 0, ambushT: 6, ambushers: [],
+      };
+    },
+    update(state, rt, dt) {
+      const truck = carById(state, rt.truckId);
+      if (!truck || truck.dead) return 'the truck is destroyed';
+      rt.target = { x: truck.x, y: truck.y };
+      // The truck follows its route at hauler pace.
+      const wp = rt.route[rt.wp];
+      if (wp) {
+        if (Math.hypot(truck.x - wp.x, truck.y - wp.y) < 80) rt.wp += 1;
+        else {
+          const { steer, throttle } = driveToward(state, truck, wp.x, wp.y, dt, 0.5);
+          moveCar(state, truck, throttle, steer, dt);
+        }
+      }
+      // Ambushers arrive in waves and go for the truck.
+      rt.ambushT -= dt;
+      if (rt.ambushT <= 0 && rt.ambushers.length < 3) {
+        rt.ambushT = 16;
+        const a = makeCar(state, 2, truck.x + 620, truck.y - 500, 0, '#77353a');
+        a.driver = 'mission';
+        a.tag = 'ambusher';
+        state.cars.push(a);
+        rt.ambushers.push(a.id);
+        say(state, [['Ilya Brandt', 'Company! Keep them off my rig!']]);
+      }
+      for (const id of rt.ambushers) {
+        const a = carById(state, id);
+        if (!a || a.dead) continue;
+        const { steer, throttle } = driveToward(state, a, truck.x, truck.y, dt, 0.95);
+        moveCar(state, a, throttle, steer, dt);
+      }
+      // The player must stay with the convoy.
+      const d = dist(state.player, truck);
+      if (d > 520) {
+        rt.awayT += dt;
+        if (rt.awayT > 10) return 'you lost the convoy';
+      } else rt.awayT = Math.max(0, rt.awayT - dt);
+      if (dist(truck, PLACES.truckDest) < 84) return 'done';
+      return null;
+    },
+    objective(rt) {
+      return rt.awayT > 1 ? `Get back to the truck — ${Math.ceil(10 - rt.awayT)}s` : 'Escort the Hauler to the downtown depot';
+    },
+    cleanup(state, rt) {
+      const truck = carById(state, rt.truckId);
+      if (truck && truck.driver === 'mission') truck.driver = 'parked';
+      for (const id of rt.ambushers) {
+        const a = carById(state, id);
+        if (a && a.driver === 'mission') a.driver = 'traffic';
+      }
+    },
+  },
+  {
+    title: 'Last Boat Out',
+    intro: [
+      ['Mara Voss', 'You know too much now, and so does every badge in the city. Five stars, love.'],
+      ['Mara Voss', 'The Ferryman waits at the docks pier. Do not keep him waiting.'],
+    ],
+    setup(state) {
+      state.heat = 500;
+      return { phase: 'run', target: { x: 3740, y: 2700 }, timer: 170 };
+    },
+    update(state, rt, dt) {
+      rt.timer -= dt;
+      if (rt.timer <= 0) return 'the Ferryman left without you';
+      if (dist(state.player, rt.target) < 58) return 'done';
+      return null;
+    },
+    objective(rt) {
+      return `Reach the boat at the docks pier — ${Math.max(0, Math.ceil(rt.timer))}s`;
+    },
+  },
+];
+
+/** Attach the mission engine's state to the world state. */
+export function initMissions(state) {
+  state.mission = { next: 0, active: null, dialog: null, banner: null };
+}
+
+/** The world marker the renderer and minimap should show right now, or null. */
+export function missionMarker(state) {
+  const m = state.mission;
+  if (!m) return null;
+  if (m.active) {
+    const t = m.active.target;
+    if (t) return { x: t.x, y: t.y, kind: 'mission', label: '!' };
+    return null;
+  }
+  if (m.next < MISSIONS.length) {
+    return { x: PLACES.maraOffice.x, y: PLACES.maraOffice.y, kind: 'office', label: 'M' };
+  }
+  return null;
+}
+
+/** The one-line objective for the HUD. */
+export function objectiveText(state) {
+  const m = state.mission;
+  if (!m) return '';
+  if (m.active) return `${MISSIONS[m.active.def].title} — ${MISSIONS[m.active.def].objective(m.active)}`;
+  if (m.next < MISSIONS.length) return `See Mara Voss for work — ${MISSIONS[m.next].title}`;
+  return 'Free roam — Port Solano is yours';
+}
+
+/** Step dialogs, banners and the active mission. `actions` are input action bits. */
+export function stepMissions(state, dt, actions) {
+  const m = state.mission;
+  if (!m || state.over) return;
+  if (m.banner) {
+    m.banner.t += dt;
+    if (m.banner.t > 4) m.banner = null;
+  }
+  if (m.dialog) {
+    m.dialog.t += dt;
+    if (m.dialog.t > 3.4 || (actions & 1)) { // ACTION_CONFIRM skips ahead
+      m.dialog.i += 1;
+      m.dialog.t = 0;
+      if (m.dialog.i >= m.dialog.lines.length) m.dialog = null;
+    }
+    return; // the world keeps moving, the mission waits for the talk to end
+  }
+  if (!m.active) {
+    if (m.next < MISSIONS.length && dist(state.player, PLACES.maraOffice) < 48 && state.player.carId === null) {
+      const def = MISSIONS[m.next];
+      const rt = def.setup(state);
+      rt.def = m.next;
+      rt.target = rt.target ?? null;
+      m.active = rt;
+      say(state, def.intro);
+      state.fx.push('missionstart');
+    }
+    return;
+  }
+  const def = MISSIONS[m.active.def];
+  const result = def.update(state, m.active, dt);
+  if (result === 'done') {
+    if (def.cleanup) def.cleanup(state, m.active);
+    finish(state, m.active);
+  } else if (typeof result === 'string') {
+    if (def.cleanup) def.cleanup(state, m.active);
+    fail(state, result);
+  }
+}
+
+export { MISSIONS };

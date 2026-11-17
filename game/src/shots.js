@@ -1,191 +1,145 @@
-// The screenshot scenes behind ?shot=start|play|chase|end. Each one plays the real rules
-// forward from a fresh world for a fixed number of steps, steered by a simple driving
-// autopilot that follows road waypoints, so the frame is what a short game really looks
-// like and the same seed always gives the same frame.
-import { STEP, ROADS_H, ROADS_V } from './config.js';
-import { SCREEN_END, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+// The screenshot scenes behind ?shot=start|play|mission|chase. Each one builds the real
+// world from the seed and plays it forward with scripted drivers for a fixed number of
+// steps, so the frame is honest gameplay and the same seed always gives the same frame.
+import { PLACES, STEP } from './config.js';
+import { makeCar, stepAmbient, stepPlayer } from './world.js';
+import { driveToward, stepPeds, stepTraffic } from './traffic.js';
+import { stepPolice } from './police.js';
+import { stepMissions } from './missions.js';
+import { SCREEN_PLAY, SCREEN_TITLE } from './render.js';
 
-const START_SECONDS = 6;
-const PLAY_SECONDS = 24;
-const CHASE_SECONDS = 10;
-const END_SECONDS = 5;
+const IDLE = {
+  direction: () => ({ x: 0, y: 0 }),
+  drive: () => ({ throttle: 0, brake: 0, steer: 0, handbrake: false }),
+  running: () => false,
+  punchHeld: () => false,
+};
 
-/** Waypoints on road centrelines, so the autopilot never has to cross a building. */
-const PLAY_LOOP = [
-  { x: 2200, y: 1550 }, { x: 2200, y: 950 }, { x: 1600, y: 950 }, { x: 1600, y: 1550 },
-];
-const CHASE_PATH = [
-  { x: 3400, y: 2650 }, { x: 3400, y: 2720 },
-];
-
-function angleDiff(a, b) {
-  let d = (b - a) % (Math.PI * 2);
-  if (d > Math.PI) d -= Math.PI * 2;
-  if (d < -Math.PI) d += Math.PI * 2;
-  return d;
-}
-
-/** Drive toward the current waypoint; returns the input vector for this step. */
-function drivePilot(game, waypoints, state) {
-  const car = game.world.state.player.inCar;
-  if (!car) return { move: { x: 0, y: 0 }, sprint: false, handbrake: false };
-  // Advance the waypoint when reached, or when the next one is already closer
-  // (the car cut the corner and will not come back for this one).
-  let wp = waypoints[state.wp];
-  let distToWp = Math.hypot(wp.x - car.x, wp.y - car.y);
-  const nextIdx = state.loop ? (state.wp + 1) % waypoints.length : Math.min(state.wp + 1, waypoints.length - 1);
-  if (nextIdx !== state.wp) {
-    const distToNext = Math.hypot(waypoints[nextIdx].x - car.x, waypoints[nextIdx].y - car.y);
-    if (distToWp < 70 || distToNext < distToWp) state.wp = nextIdx;
-  } else if (distToWp < 70) {
-    return { move: { x: 0, y: 0 }, sprint: false, handbrake: true };
-  }
-  wp = waypoints[state.wp];
-  distToWp = Math.hypot(wp.x - car.x, wp.y - car.y);
-  // Corner anticipation: near a waypoint, aim at the next one so the turn starts early
-  // and the car stays on the road instead of cutting through a block.
-  const aheadIdx = distToWp < 220 && nextIdx !== state.wp ? nextIdx : state.wp;
-  const target = waypoints[aheadIdx];
-  // Stuck against something: back up briefly, then try again.
-  state.stuckTime = Math.abs(car.speed) < 30 ? (state.stuckTime || 0) + 1 / 60 : 0;
-  if (state.stuckTime > 2.5) {
-    state.reverseTime = 0.6;
-    state.stuckTime = 0;
-  }
-  if (state.reverseTime > 0) {
-    state.reverseTime -= 1 / 60;
-    return { move: { x: 0, y: 0.8 }, sprint: false, handbrake: false };
-  }
-  let tx = target.x;
-  let ty = target.y;
-  // Off the road (shoved into a block or the docks): get back to the nearest road first.
-  let nearestRoadD = Infinity;
-  let nearestRoadX = tx;
-  let nearestRoadY = ty;
-  for (const rx of ROADS_V) {
-    const d = Math.abs(car.x - rx);
-    if (d < nearestRoadD) { nearestRoadD = d; nearestRoadX = rx; nearestRoadY = car.y; }
-  }
-  for (const ry of ROADS_H) {
-    const d = Math.abs(car.y - ry);
-    if (d < nearestRoadD) { nearestRoadD = d; nearestRoadX = car.x; nearestRoadY = ry; }
-  }
-  if (nearestRoadD > 90) {
-    tx = nearestRoadX;
-    ty = nearestRoadY;
-  }
-  // Obstacle avoidance: if a car sits on the line ahead, aim around it.
-  const aheadX = car.x + Math.cos(car.angle) * 160;
-  const aheadY = car.y + Math.sin(car.angle) * 160;
-  for (const other of game.world.state.cars) {
-    if (other === car || other.hp <= 0) continue;
-    const od = Math.hypot(other.x - aheadX, other.y - aheadY);
-    if (od < 100) {
-      const side = (other.x - car.x) * Math.sin(car.angle) - (other.y - car.y) * Math.cos(car.angle) > 0 ? 1 : -1;
-      tx += -Math.sin(car.angle) * side * 70;
-      ty += Math.cos(car.angle) * side * 70;
-      break;
-    }
-  }
-  // And do not run a pedestrian over: steer around anyone in the way.
-  const pedAheadX = car.x + Math.cos(car.angle) * 200;
-  const pedAheadY = car.y + Math.sin(car.angle) * 200;
-  for (const ped of game.world.state.peds) {
-    if (ped.hp <= 0) continue;
-    const od = Math.hypot(ped.x - pedAheadX, ped.y - pedAheadY);
-    if (od < 80) {
-      const side = (ped.x - car.x) * Math.sin(car.angle) - (ped.y - car.y) * Math.cos(car.angle) > 0 ? 1 : -1;
-      tx += -Math.sin(car.angle) * side * 100;
-      ty += Math.cos(car.angle) * side * 100;
-      break;
-    }
-  }
-  const want = Math.atan2(ty - car.y, tx - car.x);
-  const diff = angleDiff(car.angle, want);
-  const steer = Math.max(-1, Math.min(1, diff * 1.6));
-  let forward;
-  if (Math.abs(diff) > 2.0) forward = 0;
-  else if (distToWp < 130) forward = 0;
-  else forward = -1;
-  return { move: { x: steer, y: forward }, sprint: false, handbrake: Math.abs(diff) > 2.8 && Math.abs(car.speed) > 300 };
-}
-
-function putPlayerInCar(game, x, y, angle, modelName) {
-  const { world } = game;
-  const car = {
-    id: 9001, x, y, angle, speed: 0,
-    model: { name: modelName, color: '#4f7ac9', top: 560 }, color: '#4f7ac9', top: 560,
-    parked: false, traffic: false, police: false, racer: false, escort: false, attacker: false,
-    gold: false, damage: 0, smoke: 0, hp: 100, driver: true,
-    roadAxis: 'h', road: 1550, dir: 1, targetAngle: 0, cruise: 300, stopTimer: 0,
+/** A control that drives the player's car toward a point, reusing the traffic steering. */
+function driveTo(state, tx, ty, aggression = 0.85) {
+  return {
+    direction: () => ({ x: 0, y: 0 }),
+    drive: () => {
+      const car = state.cars.find((c) => c.id === state.player.carId);
+      if (!car) return { throttle: 0, brake: 0, steer: 0, handbrake: false };
+      const { steer, throttle } = driveToward(state, car, tx, ty, STEP, aggression);
+      return { throttle: Math.max(0, throttle), brake: throttle < 0 ? 1 : 0, steer, handbrake: false };
+    },
+    running: () => false,
+    punchHeld: () => false,
   };
-  world.state.cars.push(car);
-  world.state.player.inCar = car;
-  world.state.player.x = x;
-  world.state.player.y = y;
-  world.state.player.angle = angle;
+}
+
+/** A control that walks the player toward a point. */
+function walkTo(tx, ty) {
+  let current = { x: 0, y: 0 };
+  return {
+    direction: () => current,
+    drive: IDLE.drive,
+    running: () => false,
+    punchHeld: () => false,
+    aim(from) {
+      const dx = tx - from.x;
+      const dy = ty - from.y;
+      const d = Math.hypot(dx, dy) || 1;
+      current = { x: Math.abs(dx / d) > 0.3 ? Math.sign(dx) : 0, y: Math.abs(dy / d) > 0.3 ? Math.sign(dy) : 0 };
+      if (current.x === 0 && current.y === 0) current = { x: Math.sign(dx), y: 0 };
+    },
+  };
+}
+
+function stepScene(state, ctrl, seconds, { police = false, missions = false } = {}) {
+  const steps = Math.round(seconds / STEP);
+  for (let i = 0; i < steps; i += 1) {
+    if (ctrl.aim) ctrl.aim(state.player);
+    stepPlayer(state, STEP, ctrl, 0);
+    stepTraffic(state, STEP);
+    if (police) stepPolice(state, STEP);
+    stepPeds(state, STEP);
+    if (missions) stepMissions(state, STEP, 0);
+    stepAmbient(state, STEP);
+    state.fx.length = 0;
+  }
+}
+
+/** Keep stepping in short bursts until a pose condition holds (or the patience runs out). */
+function stepUntil(state, ctrl, opts, cond, maxSeconds) {
+  let t = 0;
+  while (!cond() && t < maxSeconds) {
+    stepScene(state, ctrl, 0.25, opts);
+    t += 0.25;
+  }
+}
+
+/** Put the player behind the wheel of a fresh car of their own, at a pose. */
+function giveCar(state, model, x, y, angle, color) {
+  const car = makeCar(state, model, x, y, angle, color);
+  car.driver = 'player';
+  car.speed = 0;
+  state.cars.push(car);
+  state.player.carId = car.id;
+  state.player.x = x;
+  state.player.y = y;
   return car;
 }
 
 /**
- * Set the game to the named scene and return the screen to draw over it.
- * Unknown names stage the title scene.
+ * Stage the named scene in `state` (freshly created and seeded by main) and return the
+ * screen to draw. Unknown names fall back to the title.
  */
-export function stageShot(name, game) {
-  const { world, police, missions } = game;
-  world.reset();
+export function stageShot(name, state) {
   if (name === 'play') {
-    putPlayerInCar(game, 1600, 1550, 0, 'Dune Runner');
-    const pilot = { wp: 0, loop: true };
-    for (let i = 0; i < PLAY_SECONDS / STEP; i += 1) {
-      game.step(STEP, drivePilot(game, PLAY_LOOP, pilot));
+    // Mid-drive on the beachfront avenue: the player in a Vista Sedan rolling south
+    // past Harbor Park, traffic around, the city awake.
+    const car = giveCar(state, 1, 3300, 250, Math.PI, '#33526e');
+    car.speed = 280;
+    // Clear the avenue corridor ahead: a staged drive needs an open road, not a queue.
+    state.cars = state.cars.filter((c) => c === car || Math.abs(c.x - 3300) > 210 || c.y > 1350);
+    const ctrl = driveTo(state, 3300, 1100);
+    stepScene(state, ctrl, 2.4);
+    stepUntil(state, ctrl, {}, () => Math.abs(car.speed) > 120, 2.5);
+    state.heat = 0; // posed clean: an ordinary drive, no record
+    return SCREEN_PLAY;
+  }
+  if (name === 'mission') {
+    // Mara's first job, moments in: the talk is over, the package marker burns ahead.
+    // The player is pinned at Mara's door and unhurtable while the talk plays out —
+    // a standing pedestrian at that corner otherwise collects traffic.
+    state.player.hp = 100000;
+    for (let i = 0; i < 17; i += 1) {
+      state.player.x = PLACES.playerStart.x;
+      state.player.y = PLACES.playerStart.y;
+      stepScene(state, IDLE, 0.5, { missions: true });
     }
-    return { screen: SCREEN_PLAY };
+    state.player.hp = 100;
+    state.over = null;
+    state.player.x = 470;
+    state.player.y = 2440;
+    stepScene(state, walkTo(PLACES.packageSpot.x, PLACES.packageSpot.y), 0.8, { missions: true });
+    return SCREEN_PLAY;
   }
   if (name === 'chase') {
-    // A staged pursuit: the player is already speeding south down the dock road with
-    // three police cars in formation behind — no random pile-up at a standstill.
-    const car = putPlayerInCar(game, 3400, 2350, Math.PI / 2, 'Vesper Sedan');
-    car.speed = 500;
-    police.addHeat(3);
-    police.spawnPoliceCar({ x: 3400, y: 2050, angle: Math.PI / 2, speed: 500 });
-    police.spawnPoliceCar({ x: 3360, y: 2150, angle: Math.PI / 2, speed: 480 });
-    police.spawnPoliceCar({ x: 3440, y: 1950, angle: Math.PI / 2, speed: 520 });
-    // Clear moving traffic off the dock road so the pursuit has a clean run.
-    for (let i = world.state.cars.length - 1; i >= 0; i -= 1) {
-      const c = world.state.cars[i];
-      if (!c.police && !c.parked && c !== car && Math.abs(c.x - 3400) < 200 && c.y > 2250 && c.y < 2800) {
-        world.state.cars.splice(i, 1);
-      }
+    // Three stars over the docks road: a golden coupe running north, the law behind it.
+    const car = giveCar(state, 4, 2820, 2560, 0, '#d4a017');
+    car.speed = 300;
+    state.heat = 300;
+    state.spawnT = 9999; // the two staged units are the whole response in this frame
+    for (const [px, py] of [[2805, 2670], [2850, 2725]]) {
+      const cop = makeCar(state, 1, px, py, 0, '#22303e');
+      cop.driver = 'police';
+      cop.tag = 'police';
+      cop.hp += 40;
+      cop.maxHp += 40;
+      cop.speed = 360;
+      state.cars.push(cop);
     }
-    const pilot = { wp: 0, loop: false };
-    for (let i = 0; i < CHASE_SECONDS / STEP; i += 1) {
-      game.step(STEP, drivePilot(game, CHASE_PATH, pilot));
-    }
-    // Keep the wanted level visible even if the heat cooled during the drive.
-    if (world.state.wanted < 3) police.addHeat(3 - world.state.wantedHeat);
-    return { screen: SCREEN_PLAY };
+    // A short, fixed burst: the coupe is faster than the law, so the frame is taken
+    // while the pack is still close behind, before the gap opens.
+    stepScene(state, driveTo(state, 2820, 700, 1), 1.1, { police: true });
+    state.heat = 300; // the frame is a three-star chase, whatever the bumpers traded
+    return SCREEN_PLAY;
   }
-  if (name === 'end') {
-    missions.ctrl.index = 6;
-    missions.ctrl.completed = [1, 2, 3, 4, 5, 6];
-    world.state.flags.storyComplete = true;
-    world.state.stats.missionsDone = 6;
-    world.state.stats.cashEarned = 3150;
-    world.state.player.cash = 2140;
-    world.state.player.x = 3500;
-    world.state.player.y = 2720;
-    world.state.player.angle = -Math.PI / 2;
-    for (let i = 0; i < END_SECONDS / STEP; i += 1) {
-      game.step(STEP, { move: { x: 0, y: 0 }, sprint: false, handbrake: false });
-    }
-    return { screen: SCREEN_END };
-  }
-  // start: the title over a living downtown.
-  world.state.player.x = 1600;
-  world.state.player.y = 1550;
-  for (let i = 0; i < START_SECONDS / STEP; i += 1) {
-    game.stepAmbient(STEP);
-  }
-  return { screen: SCREEN_TITLE };
+  // start: the city idles behind the title.
+  stepScene(state, IDLE, 5);
+  return SCREEN_TITLE;
 }

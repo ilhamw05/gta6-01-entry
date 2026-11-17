@@ -1,122 +1,78 @@
-// Solano Vice — every tuning number, colour and world constant in one place.
-// Port Solano is a 4000x3000 coastal grid city. All names, districts and characters are
-// original inventions for this game; nothing here comes from any existing franchise.
+// Solano Vice — shared constants: the shape of Port Solano and the tuning of everything in it.
+// Every module imports from here so the city the world builds is the city the renderer draws,
+// the police patrol and the missions point at.
 
-export const WORLD = { width: 4000, height: 3000, waterY: 2900, beachY: 2820 };
-
-export const VIEW = { width: 1280, height: 720 };
-
-/** Fixed simulation step: 60 updates a second whatever the display rate. */
+/** Fixed simulation step, in seconds. The loop never advances the world by any other amount. */
 export const STEP = 1 / 60;
 
-/** Vertical and horizontal road centre lines; roads are ROAD_WIDTH wide. */
-export const ROADS_V = [400, 1000, 1600, 2200, 2800, 3400];
-export const ROADS_H = [350, 950, 1550, 2150, 2650];
-export const ROAD_WIDTH = 110;
-export const LANE = 27;
+/** World size in pixels. Port Solano is a coastal grid: land runs west, the sea is the east edge. */
+export const WORLD = { width: 4000, height: 3000 };
 
-export const PLAYER = {
-  radius: 13,
-  walkSpeed: 210,
-  sprintSpeed: 330,
-  accel: 1500,
-  health: 100,
-  punchRange: 46,
-  punchArc: 1.1,
-  punchDamage: 34,
-  punchCooldown: 0.38,
-};
+/** The sea starts here; between BEACH_X and SEA_X is sand, east of SEA_X is water. */
+export const BEACH_X = 3548;
+export const SEA_X = 3660;
 
-export const CAR = {
-  length: 64,
-  width: 30,
-  radius: 24,
-  accel: 340,
-  brake: 620,
-  reverseAccel: 220,
-  maxSpeed: 560,
-  maxReverse: 170,
-  turnRate: 2.6,
-  handbrakeTurn: 3.6,
-  damagePerHit: 14,
-};
+/** Road centre-lines. Avenues run north–south, streets run east–west; roads are ROAD_W wide. */
+export const AVENUES = [420, 1020, 1620, 2220, 2820, 3300];
+export const STREETS = [420, 1080, 1740, 2400];
+export const ROAD_W = 120;
+/** Sidewalks ring every road: the band this wide on each side of the asphalt. */
+export const SIDEWALK_W = 20;
 
-export const WANTED = {
-  max: 5,
-  decayDelay: 9,
-  decayStep: 14,
-  policeCarPerStar: 1,
-  maxPoliceCars: 6,
-  spawnDistance: 620,
-};
-
-export const TRAFFIC = { cars: 26, peds: 42, pedSpeed: 62 };
-
-export const PED = { radius: 11, health: 50, fleeSpeed: 190 };
-
-export const MISSION_REWARDS = [300, 450, 500, 600, 650, 1000];
-
-export const PALETTE = {
-  backdrop: '#0d1117',
-  grass: '#3d6b35',
-  grassDark: '#33592d',
-  park: '#4a7a3f',
-  sand: '#c9b078',
-  water: '#1d5f7a',
-  waterDeep: '#144a61',
-  road: '#2b2f36',
-  roadEdge: '#3a3f47',
-  lane: '#d8c95a',
-  sidewalk: '#565b63',
-  buildingRoof: ['#7a5a4a', '#5a6a7a', '#6a5a7a', '#4a6a5a', '#8a6a3a', '#5a5a6a'],
-  buildingEdge: '#22262d',
-  downtownGlass: '#3f6a8a',
-  dockConcrete: '#6a6a62',
-  container: ['#b8542e', '#2e7ab8', '#3f9a4a', '#c9a52e', '#8a3a5a'],
-  tree: '#2e5a26',
-  treeLight: '#3f7a33',
-  player: '#e8b13c',
-  playerDark: '#8a6a1a',
-  pedShirt: ['#c94f4f', '#4f7ac9', '#4fc97a', '#c9a54f', '#9a4fc9', '#4fc9c9', '#e8e8e8'],
-  police: '#2e4a8a',
-  policeLight: '#d84a4a',
-  gold: '#f2c94c',
-  text: '#eef1f5',
-  muted: '#9aa3b0',
-  panel: 'rgba(16, 20, 28, 0.92)',
-  hudBack: 'rgba(10, 14, 20, 0.62)',
-  objective: '#ffd75e',
-  danger: '#ff5a4a',
-  ok: '#58d68a',
-  night: 'rgba(8, 12, 40, 0.34)',
-  dusk: 'rgba(40, 20, 60, 0.18)',
-};
-
-export const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
-
-/** Where a run is kept between visits (this browser only). */
-export const SAVE_KEY = 'solano-vice.save.v1';
-export const BEST_KEY = 'solano-vice.best';
-
-/** Fixed seed for the screenshot scenes, so every render shows the same frame. */
-export const SHOT_SEED = 20261117;
-
-/** Named car models, all invented for Port Solano. */
-export const CAR_MODELS = [
-  { name: 'Kelpie Compact', color: '#c94f4f', top: 520 },
-  { name: 'Dune Runner', color: '#4f7ac9', top: 540 },
-  { name: 'Harbor Taxi', color: '#e8c93c', top: 500 },
-  { name: 'Vesper Sedan', color: '#8a8f96', top: 560 },
-  { name: 'Cinder Pickup', color: '#3f9a4a', top: 480 },
-  { name: 'Marlin Coupe', color: '#9a4fc9', top: 590 },
-  { name: 'Tide Van', color: '#e8e8e8', top: 460 },
-];
-
+/** The six districts, as rectangles tested in order; the first match names the ground. */
 export const DISTRICTS = [
-  { name: 'Downtown', x: 1300, y: 100, w: 1200, h: 700 },
-  { name: 'The Docks', x: 3000, y: 2200, w: 950, h: 620 },
-  { name: 'Beachfront', x: 100, y: 2700, w: 3800, h: 200 },
-  { name: 'North Suburbs', x: 100, y: 100, w: 1100, h: 700 },
-  { name: 'Old Town', x: 100, y: 1000, w: 1100, h: 1100 },
-  { name: 'Harbor Park', x: 1750, y: 1700, w: 550, h: 550 },
+  { name: 'Harbor Park', x: 2820, y: 0, w: 728, h: 1080, ground: '#3f7a3a' },
+  { name: 'North Suburbs', x: 0, y: 0, w: 1620, h: 1080, ground: '#4c8143' },
+  { name: 'Beachfront', x: 3300, y: 0, w: 248, h: 2400, ground: '#578a48' },
+  { name: 'Downtown', x: 1620, y: 420, w: 1200, h: 1980, ground: '#5b8a4c' },
+  { name: 'Old Town', x: 0, y: 1740, w: 1620, h: 1260, ground: '#54824a' },
+  { name: 'The Docks', x: 1620, y: 2400, w: 1928, h: 600, ground: '#6b7a52' },
+  { name: 'Port Solano', x: 0, y: 0, w: 4000, h: 3000, ground: '#4c8143' },
 ];
+
+/** Named places the story and the services use. All invented, all on sidewalks or open ground. */
+export const PLACES = {
+  maraOffice: { x: 2310, y: 990, label: "Mara's office" },
+  policeStation: { x: 2500, y: 1470, label: 'Police station' },
+  hospital: { x: 905, y: 2310, label: 'Hospital' },
+  safehouse: { x: 2960, y: 560, label: 'Safehouse' },
+  docksGarage: { x: 3120, y: 2745, label: 'Docks garage' },
+  boat: { x: 3790, y: 2700, label: 'The boat' },
+  packageSpot: { x: 330, y: 2530, label: 'Package' },
+  coupeSpot: { x: 700, y: 690, label: 'Golden coupe' },
+  raceStart: { x: 3300, y: 1290, label: 'Race start' },
+  truckStart: { x: 2520, y: 2710, label: 'Cargo truck' },
+  truckDest: { x: 1980, y: 1170, label: 'Depot' },
+  playerStart: { x: 2320, y: 990, label: 'Start' },
+};
+
+/** Car models invented for Port Solano: name, size, pace, toughness and the colours they wear. */
+export const CAR_MODELS = [
+  { name: 'Kelpie Compact', w: 34, l: 58, top: 330, accel: 260, hp: 90, colors: ['#c94f42', '#4a7fb5', '#d9d9d9', '#5aa469'] },
+  { name: 'Vista Sedan', w: 36, l: 66, top: 380, accel: 300, hp: 110, colors: ['#33526e', '#7a4a8c', '#b5bdc4', '#274156'] },
+  { name: 'Bison Pickup', w: 38, l: 70, top: 350, accel: 270, hp: 150, colors: ['#8c5a2b', '#546e7a', '#77353a', '#3d5a45'] },
+  { name: 'Tortuga Van', w: 38, l: 74, top: 320, accel: 230, hp: 160, colors: ['#cfd4d8', '#8795a1', '#b5893c', '#4f6157'] },
+  { name: 'Marlin Coupe', w: 35, l: 64, top: 460, accel: 380, hp: 100, colors: ['#d4a017', '#a31f34', '#20242c', '#e8e8ec'] },
+  { name: 'Osprey Roadster', w: 34, l: 60, top: 490, accel: 410, hp: 85, colors: ['#e07b2a', '#2a9d8f', '#e8e8ec', '#5a3d8c'] },
+  { name: 'Hauler Truck', w: 42, l: 96, top: 300, accel: 200, hp: 260, colors: ['#7a4a21', '#5d6d7e'] },
+];
+
+/** The player on foot. */
+export const FOOT = { radius: 11, walk: 155, run: 250, hp: 100, punchRange: 50, punchDamage: 34, punchCooldown: 0.38 };
+
+/** Wanted tuning: heat is earned per crime, one star per HEAT_PER_STAR, and it cools when unseen. */
+export const HEAT_PER_STAR = 100;
+export const HEAT_MAX = 500;
+export const HEAT = { steal: 60, hitPed: 120, hitCar: 25, punch: 30, missionCrime: 80 };
+export const HEAT_COOL = 6; // per second while no police can see the player
+export const HEAT_COOL_SEEN = 1.2; // per second while watched
+
+/** In-game clock: one real second is one game minute; a day is 24 minutes at the keyboard. */
+export const MINUTES_PER_SECOND = 1;
+export const DAY_START = 10 * 60; // 10:00
+
+/** localStorage key for the save game (cash, mission progress, position). */
+export const SAVE_KEY = 'solano-vice-save-v1';
+
+/** Viewport the game is composed for (the canvas scales to the window, this is the design size). */
+export const VIEW = { width: 1280, height: 720 };
